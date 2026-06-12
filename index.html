@@ -515,16 +515,27 @@
     // 地图加载
     // ============================================================
     async function loadChinaMap() {
-        try {
-            const resp = await fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json');
-            if (!resp.ok) throw new Error('地图数据加载失败');
-            const geoJSON = await resp.json();
-            echarts.registerMap('china', geoJSON);
-            return true;
-        } catch (e) {
-            console.error('地图加载失败:', e);
-            return false;
+        // 尝试多个数据源
+        const sources = [
+            'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json',
+            'https://raw.githubusercontent.com/apache/echarts-examples/gh-pages/public/data/asset/geo/china.json',
+            'https://cdn.jsdelivr.net/gh/apache/echarts-examples@gh-pages/public/data/asset/geo/china.json',
+        ];
+
+        for (const url of sources) {
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) continue;
+                const geoJSON = await resp.json();
+                if (geoJSON && geoJSON.features && geoJSON.features.length > 0) {
+                    echarts.registerMap('china', geoJSON);
+                    return true;
+                }
+            } catch (e) {
+                console.warn(`地图源 ${url} 加载失败:`, e);
+            }
         }
+        return false;
     }
 
     // ============================================================
