@@ -58,7 +58,7 @@
                 <h2 class="text-xl font-bold text-blue-400">️ 中国降雨分布图</h2>
                 <div class="flex items-center gap-2 text-xs text-gray-400">
                     <div id="day-switcher" class="flex gap-1 mr-2">
-                        <button class="day-btn px-2 py-1 rounded bg-blue-600 text-white" data-day="0">6月19日</button>
+                        <button class="day-btn px-2 py-1 rounded bg-blue-600 text-white" data-day="0">6月19日 (端午)</button>
                         <button class="day-btn px-2 py-1 rounded bg-gray-700 text-gray-300" data-day="1">6月20日</button>
                         <button class="day-btn px-2 py-1 rounded bg-gray-700 text-gray-300" data-day="2">6月21日</button>
                     </div>
@@ -91,7 +91,7 @@
             <div class="panel p-3">
                 <h3 class="text-sm font-semibold text-gray-300 mb-2">📡 数据源</h3>
                 <div class="text-xs text-gray-400 space-y-1">
-                    <div class="flex justify-between"><span>来源</span><span id="info-source" class="text-blue-400">和风天气</span></div>
+                    <div class="flex justify-between"><span>来源</span><span id="info-source" class="text-blue-400">Open-Meteo</span></div>
                     <div class="flex justify-between"><span>城市数</span><span id="info-cities" class="text-blue-400">--</span></div>
                     <div class="flex justify-between"><span>更新时间</span><span id="info-time" class="text-blue-400">--</span></div>
                 </div>
@@ -249,9 +249,11 @@
     let mapChart = null;
     let weatherDataByDay = { 0: null, 1: null, 2: null }; // 端午三天数据
     let currentDay = 0; // 当前选中的日期索引
-    // Cloudflare Worker 代理地址（部署后替换为你的 Worker URL）
-    const PROXY_URL = 'https://weather-proxy.caotianchong.workers.dev';
     const DRAGON_BOAT_DATES = ['2026-06-19', '2026-06-20', '2026-06-21'];
+    const dayLabels = ['6月19日 (端午)', '6月20日', '6月21日'];
+
+    // Open-Meteo API（免费，无需 Key，支持 14 天预报）
+    const OPEN_METEO_URL = 'https://api.open-meteo.com/v1/forecast';
 
     // ============================================================
     // 工具函数
@@ -277,62 +279,59 @@
         return '大暴雨';
     }
 
-    // ============================================================
-    // 通过 Cloudflare Worker 代理获取天气数据
-    // ============================================================
-    // 安全解析降雨量（处理 "无"、"0.0" 等情况）
-    function parseRain(value) {
-        if (!value || value === '无') return 0;
-        const num = parseFloat(value);
-        return isNaN(num) ? 0 : num;
+    // WMO 天气代码转中文描述
+    function wmoToText(code) {
+        const map = {
+            0: '晴', 1: '大部晴朗', 2: '多云', 3: '阴天',
+            45: '雾', 48: '冻雾',
+            51: '小毛毛雨', 53: '毛毛雨', 55: '大毛毛雨',
+            56: '冻毛毛雨', 57: '大冻毛毛雨',
+            61: '小雨', 63: '中雨', 65: '大雨',
+            66: '冻雨', 67: '大冻雨',
+            71: '小雪', 73: '中雪', 75: '大雪', 77: '雪粒',
+            80: '小阵雨', 81: '中阵雨', 82: '大阵雨',
+            85: '小阵雪', 86: '大阵雪',
+            95: '雷暴', 96: '雷暴伴冰雹', 99: '强雷暴伴冰雹'
+        };
+        return map[code] || '未知';
     }
 
-    // 根据日期索引获取对应的 daily 数组索引
-    // API 返回 daily[0]=今天, daily[1]=明天, daily[2]=后天
-    // 我们需要找到端午三天对应的索引
-    function getDayIndexForDragonBoat(apiDaily, targetDate) {
-        for (let i = 0; i < apiDaily.length; i++) {
-            if (apiDaily[i].fxDate === targetDate) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
+    // ============================================================
+    // 通过 Open-Meteo API 获取天气数据
+    // ============================================================
     async function fetchAllWeatherData() {
         const resultsByDay = { 0: [], 1: [], 2: [] };
         const total = CITIES.length;
-        const batchSize = 5;
+        const batchSize = 10;
 
         for (let i = 0; i < total; i += batchSize) {
             const batch = CITIES.slice(i, i + batchSize);
-            
+
             const promises = batch.map(async (city) => {
                 try {
-                    const url = `${PROXY_URL}?location=${city.lng},${city.lat}`;
+                    const url = `${OPEN_METEO_URL}?latitude=${city.lat}&longitude=${city.lng}&daily=precipitation_sum,weathercode,temperature_2m_max,temperature_2m_min&forecast_days=14&timezone=Asia%2FShanghai`;
                     const resp = await fetch(url);
                     if (!resp.ok) return null;
                     const data = await resp.json();
-                    
-                    if (data.code === '200' && data.daily && data.daily.length > 0) {
-                        // 为每一天查找对应的数据
+
+                    if (data.daily && data.daily.time) {
                         for (let dayIdx = 0; dayIdx < 3; dayIdx++) {
                             const targetDate = DRAGON_BOAT_DATES[dayIdx];
-                            const apiIdx = getDayIndexForDragonBoat(data.daily, targetDate);
-                            
-                            if (apiIdx >= 0) {
-                                const day = data.daily[apiIdx];
+                            const dateIdx = data.daily.time.indexOf(targetDate);
+
+                            if (dateIdx >= 0) {
+                                const precip = data.daily.precipitation_sum[dateIdx] || 0;
+                                const wmoCode = data.daily.weathercode[dateIdx] || 0;
                                 resultsByDay[dayIdx].push({
                                     name: city.name,
                                     lng: city.lng,
                                     lat: city.lat,
                                     region: city.region,
-                                    rain: parseRain(day.precip),
-                                    textDay: day.textDay || '未知',
-                                    textNight: day.textNight || '未知',
-                                    tempMax: day.tempMax || '--',
-                                    tempMin: day.tempMin || '--',
-                                    fxDate: day.fxDate || targetDate,
+                                    rain: parseFloat(precip) || 0,
+                                    textDay: wmoToText(wmoCode),
+                                    tempMax: data.daily.temperature_2m_max[dateIdx] ?? '--',
+                                    tempMin: data.daily.temperature_2m_min[dateIdx] ?? '--',
+                                    fxDate: targetDate,
                                 });
                             }
                         }
@@ -343,11 +342,10 @@
                 return null;
             });
 
-            const batchResults = await Promise.all(promises);
-            // batchResults 都是 null，实际数据已存入 resultsByDay
+            await Promise.all(promises);
 
             if (i + batchSize < total) {
-                await new Promise(resolve => setTimeout(resolve, 200));
+                await new Promise(resolve => setTimeout(resolve, 100));
             }
         }
 
@@ -358,7 +356,7 @@
     // 演示数据生成
     // ============================================================
     function generateDemoData() {
-        const results = [];
+        const resultsByDay = { 0: [], 1: [], 2: [] };
         
         const rainPattern = {
             south: [20, 80],
@@ -371,24 +369,26 @@
         };
 
         CITIES.forEach(city => {
-            const range = rainPattern[city.region] || [0, 10];
-            const rain = Math.round(range[0] + Math.random() * (range[1] - range[0]));
-            const texts = rain === 0 ? ['晴', '多云'] : rain < 10 ? ['小雨', '阴'] : rain < 25 ? ['中雨', '小雨'] : rain < 50 ? ['大雨', '中雨'] : ['暴雨', '大雨'];
-            
-            results.push({
-                name: city.name,
-                lng: city.lng,
-                lat: city.lat,
-                region: city.region,
-                rain: rain,
-                textDay: texts[0],
-                textNight: texts[1],
-                tempMax: Math.round(20 + Math.random() * 15),
-                tempMin: Math.round(15 + Math.random() * 10),
-            });
+            for (let dayIdx = 0; dayIdx < 3; dayIdx++) {
+                const range = rainPattern[city.region] || [0, 10];
+                const rain = Math.round(range[0] + Math.random() * (range[1] - range[0]));
+                const texts = rain === 0 ? ['晴', '多云'] : rain < 10 ? ['小雨', '阴'] : rain < 25 ? ['中雨', '小雨'] : rain < 50 ? ['大雨', '中雨'] : ['暴雨', '大雨'];
+                
+                resultsByDay[dayIdx].push({
+                    name: city.name,
+                    lng: city.lng,
+                    lat: city.lat,
+                    region: city.region,
+                    rain: rain,
+                    textDay: texts[0],
+                    tempMax: Math.round(20 + Math.random() * 15),
+                    tempMin: Math.round(15 + Math.random() * 10),
+                    fxDate: DRAGON_BOAT_DATES[dayIdx],
+                });
+            }
         });
 
-        return results;
+        return resultsByDay;
     }
 
     // ============================================================
@@ -590,11 +590,10 @@
         initMapChart();
 
         // 默认加载演示数据（三天）
-        for (let i = 0; i < 3; i++) {
-            weatherDataByDay[i] = generateDemoData();
-        }
+        const demoData = generateDemoData();
+        weatherDataByDay = demoData;
         $('info-source').textContent = '演示数据 (模拟)';
-        $('data-time').textContent = `数据时间: ${DRAGON_BOAT_DATES[currentDay]}`;
+        $('data-time').textContent = `数据时间: ${dayLabels[currentDay]}`;
         renderMap();
 
         // 日期切换按钮
@@ -605,31 +604,21 @@
                     b.className = 'day-btn px-2 py-1 rounded bg-gray-700 text-gray-300';
                 });
                 btn.className = 'day-btn px-2 py-1 rounded bg-blue-600 text-white';
-                $('data-time').textContent = `数据时间: ${DRAGON_BOAT_DATES[currentDay]}`;
+                $('data-time').textContent = `数据时间: ${dayLabels[currentDay]}`;
                 renderMap();
             });
         });
 
-        // 刷新按钮 - 通过代理获取真实数据
+        // 刷新按钮 - 获取 Open-Meteo 真实数据
         $('btn-refresh').addEventListener('click', async () => {
             $('btn-refresh').textContent = '加载中...';
             $('btn-refresh').disabled = true;
 
             try {
-                // 测试代理是否可用
-                const testUrl = `${PROXY_URL}?location=116.41,39.92`;
-                const testResp = await fetch(testUrl);
-                const testData = await testResp.json();
-                
-                if (testData.code !== '200') {
-                    alert(`数据获取失败 (错误码: ${testData.code})，请检查代理配置`);
-                    return;
-                }
-
                 const results = await fetchAllWeatherData();
                 weatherDataByDay = results;
-                $('info-source').textContent = '和风天气 (端午预报)';
-                $('data-time').textContent = `数据时间: ${DRAGON_BOAT_DATES[currentDay]}`;
+                $('info-source').textContent = 'Open-Meteo (真实预报)';
+                $('data-time').textContent = `数据时间: ${dayLabels[currentDay]}`;
                 renderMap();
                 
                 const totalCities = results[0].length;
