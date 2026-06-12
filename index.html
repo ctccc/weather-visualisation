@@ -243,8 +243,8 @@
     // ============================================================
     let mapChart = null;
     let weatherData = null;
-    let apiKey = '';
-    let apiHost = 'devapi.qweather.com';
+    // Cloudflare Worker 代理地址（部署后替换为你的 Worker URL）
+    const PROXY_URL = 'https://your-worker-name.your-subdomain.workers.dev';
 
     // ============================================================
     // 工具函数
@@ -271,7 +271,7 @@
     }
 
     // ============================================================
-    // 和风天气 API 调用
+    // 通过 Cloudflare Worker 代理获取天气数据
     // ============================================================
     async function fetchAllWeatherData() {
         const results = [];
@@ -283,7 +283,7 @@
             
             const promises = batch.map(async (city) => {
                 try {
-                    const url = `https://${apiHost}/v7/weather/3d?location=${city.lng},${city.lat}&key=${apiKey}`;
+                    const url = `${PROXY_URL}?location=${city.lng},${city.lat}`;
                     const resp = await fetch(url);
                     if (!resp.ok) return null;
                     const data = await resp.json();
@@ -539,29 +539,25 @@
 
         initMapChart();
 
-        // 加载演示数据
+        // 默认加载演示数据
         weatherData = generateDemoData();
         $('info-source').textContent = '演示数据 (模拟)';
         $('data-time').textContent = '数据时间: 演示模式';
         renderMap();
 
-        // 刷新按钮 - 获取真实数据
+        // 刷新按钮 - 通过代理获取真实数据
         $('btn-refresh').addEventListener('click', async () => {
-            apiKey = prompt('请输入和风天气 API Key:\n\n免费注册: https://console.qweather.com\n免费订阅每月5万次请求');
-            if (!apiKey) return;
-
-            apiHost = 'devapi.qweather.com';
             $('btn-refresh').textContent = '加载中...';
             $('btn-refresh').disabled = true;
 
             try {
-                // 测试 API Key
-                const testUrl = `https://${apiHost}/v7/weather/3d?location=116.41,39.92&key=${apiKey}`;
+                // 测试代理是否可用
+                const testUrl = `${PROXY_URL}?location=116.41,39.92`;
                 const testResp = await fetch(testUrl);
                 const testData = await testResp.json();
                 
                 if (testData.code !== '200') {
-                    alert(`API Key 无效 (错误码: ${testData.code})`);
+                    alert(`数据获取失败 (错误码: ${testData.code})，请检查代理配置`);
                     return;
                 }
 
