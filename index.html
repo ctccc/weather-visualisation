@@ -273,6 +273,13 @@
     // ============================================================
     // 通过 Cloudflare Worker 代理获取天气数据
     // ============================================================
+    // 安全解析降雨量（处理 "无"、"0.0" 等情况）
+    function parseRain(value) {
+        if (!value || value === '无') return 0;
+        const num = parseFloat(value);
+        return isNaN(num) ? 0 : num;
+    }
+
     async function fetchAllWeatherData() {
         const results = [];
         const total = CITIES.length;
@@ -288,17 +295,18 @@
                     if (!resp.ok) return null;
                     const data = await resp.json();
                     
-                    if (data.code === '200' && data.daily) {
+                    if (data.code === '200' && data.daily && data.daily.length > 0) {
+                        const day = data.daily[0];
                         return {
                             name: city.name,
                             lng: city.lng,
                             lat: city.lat,
                             region: city.region,
-                            rain: parseFloat(data.daily[0].precip) || 0,
-                            textDay: data.daily[0].textDay,
-                            textNight: data.daily[0].textNight,
-                            tempMax: data.daily[0].tempMax,
-                            tempMin: data.daily[0].tempMin,
+                            rain: parseRain(day.precip),
+                            textDay: day.textDay || '未知',
+                            textNight: day.textNight || '未知',
+                            tempMax: day.tempMax || '--',
+                            tempMin: day.tempMin || '--',
                         };
                     }
                 } catch (e) {
