@@ -523,11 +523,11 @@
     // 地图加载
     // ============================================================
     async function loadChinaMap() {
-        // 尝试多个数据源
+        // 优先从同域名加载（GitHub Pages 部署时可用）
         const sources = [
+            './china.json',
             'https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json',
             'https://raw.githubusercontent.com/apache/echarts-examples/gh-pages/public/data/asset/geo/china.json',
-            'https://cdn.jsdelivr.net/gh/apache/echarts-examples@gh-pages/public/data/asset/geo/china.json',
         ];
 
         for (const url of sources) {
