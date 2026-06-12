@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中国天气可视化仪表盘</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        dark: '#0b0f19',
+                        panel: '#151a28',
+                        border: '#2a3040'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0b0f19;
+            color: #e2e8f0;
+            font-family: 'Microsoft YaHei', 'PingFang SC', sans-serif;
+        }
+        .panel {
+            background-color: #151a28;
+            border: 1px solid #2a3040;
+            border-radius: 8px;
+        }
+        #map-container {
+            width: 100%;
+            height: 100%;
+        }
+        .rain-legend {
+            background: linear-gradient(to right, #475569, #fbbf24, #3b82f6, #8b5cf6, #ef4444, #991b1b);
+        }
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #151a28;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2a3040;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body class="h-screen overflow-hidden flex flex-col">
+    <!-- 主界面 -->
+    <div class="flex flex-1 p-4 gap-4 min-h-0">
+        <!-- 左侧：地图容器 (2/3) -->
+        <div class="panel p-4 flex flex-col" style="flex: 2;">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-xl font-bold text-blue-400">️ 中国降雨分布图</h2>
+                <div class="flex items-center gap-2 text-xs text-gray-400">
+                    <span id="data-time">数据时间: --</span>
+                    <button id="btn-refresh" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded transition text-white">
+                        刷新数据
+                    </button>
+                </div>
+            </div>
+            <div id="map-container" class="flex-1 relative min-h-0"></div>
+            <!-- 降雨图例 -->
+            <div class="flex items-center gap-3 mt-3 text-xs text-gray-400">
+                <span>无雨</span>
+                <div class="rain-legend h-3 flex-1 rounded"></div>
+                <span>大暴雨</span>
+            </div>
+            <div class="flex gap-4 mt-2 text-xs text-gray-500">
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-yellow-400"></span>小雨 (&lt;10mm)</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span>中雨 (10-25mm)</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-purple-500"></span>大雨 (25-50mm)</span>
+                <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500"></span>暴雨 (50-100mm)</span>
+            </div>
+        </div>
+
+        <!-- 右侧：数据面板 (1/3) -->
+        <div class="panel p-4 flex flex-col gap-3 overflow-y-auto" style="flex: 1;">
+            <h2 class="text-xl font-bold text-blue-400">📊 天气数据面板</h2>
+            
+            <!-- 数据源信息 -->
+            <div class="panel p-3">
+                <h3 class="text-sm font-semibold text-gray-300 mb-2">📡 数据源</h3>
+                <div class="text-xs text-gray-400 space-y-1">
+                    <div class="flex justify-between"><span>来源</span><span id="info-source" class="text-blue-400">和风天气</span></div>
+                    <div class="flex justify-between"><span>城市数</span><span id="info-cities" class="text-blue-400">--</span></div>
+                    <div class="flex justify-between"><span>更新时间</span><span id="info-time" class="text-blue-400">--</span></div>
+                </div>
+            </div>
+
+            <!-- 降雨统计 -->
+            <div class="panel p-3">
+                <h3 class="text-sm font-semibold text-green-400 mb-2">📈 降雨统计</h3>
+                <div class="text-xs text-gray-400 space-y-1">
+                    <div class="flex justify-between"><span>最大降雨</span><span id="stat-max" class="text-red-400">--</span></div>
+                    <div class="flex justify-between"><span>平均降雨</span><span id="stat-avg" class="text-blue-400">--</span></div>
+                    <div class="flex justify-between"><span>有雨城市</span><span id="stat-rainy" class="text-green-400">--</span></div>
+                    <div class="flex justify-between"><span>暴雨城市</span><span id="stat-heavy" class="text-red-400">--</span></div>
+                </div>
+            </div>
+
+            <!-- 降雨排行 -->
+            <div class="panel p-3 flex-1 flex flex-col min-h-0">
+                <h3 class="text-sm font-semibold text-orange-400 mb-2">🏆 降雨量排行 (Top 15)</h3>
+                <div id="rain-ranking" class="flex-1 overflow-y-auto text-xs space-y-1 pr-1">
+                    <div class="text-gray-500 text-center py-4">等待数据加载...</div>
+                </div>
+            </div>
+
+            <!-- 暴雨预警 -->
+            <div class="panel p-3">
+                <h3 class="text-sm font-semibold text-red-400 mb-2">⚠️ 暴雨预警 (≥50mm)</h3>
+                <div id="warning-list" class="text-xs text-gray-400 space-y-1 max-h-32 overflow-y-auto">
+                    <div class="text-gray-500">暂无预警</div>
+                </div>
+            </div>
+
+            <!-- 区域统计 -->
+            <div class="panel p-3">
+                <h3 class="text-sm font-semibold text-purple-400 mb-2">🗺️ 区域降雨概览</h3>
+                <div id="region-stats" class="text-xs text-gray-400 space-y-1">
+                    <div class="flex justify-between"><span>华南地区</span><span id="region-south" class="text-blue-400">--</span></div>
+                    <div class="flex justify-between"><span>华东地区</span><span id="region-east" class="text-blue-400">--</span></div>
+                    <div class="flex justify-between"><span>华中地区</span><span id="region-central" class="text-blue-400">--</span></div>
+                    <div class="flex justify-between"><span>华北地区</span><span id="region-north" class="text-blue-400">--</span></div>
+                    <div class="flex justify-between"><span>西南地区</span><span id="region-west" class="text-blue-400">--</span></div>
+                    <div class="flex justify-between"><span>西北地区</span><span id="region-northwest" class="text-blue-400">--</span></div>
+                    <div class="flex justify-between"><span>东北地区</span><span id="region-northeast" class="text-blue-400">--</span></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // ============================================================
+    // 中国主要城市列表 (100+ 城市，含经纬度)
+    // ============================================================
+    const CITIES = [
+        // 直辖市
+        { name: '北京', lng: 116.4074, lat: 39.9042, region: 'north' },
+        { name: '上海', lng: 121.4737, lat: 31.2304, region: 'east' },
+        { name: '天津', lng: 117.2009, lat: 39.0842, region: 'north' },
+        { name: '重庆', lng: 106.5516, lat: 29.5630, region: 'west' },
+        // 华北
+        { name: '石家庄', lng: 114.5149, lat: 38.0428, region: 'north' },
+        { name: '太原', lng: 112.5489, lat: 37.8706, region: 'north' },
+        { name: '呼和浩特', lng: 111.7492, lat: 40.8424, region: 'north' },
+        { name: '保定', lng: 115.4645, lat: 38.8738, region: 'north' },
+        { name: '唐山', lng: 118.1802, lat: 39.6243, region: 'north' },
+        { name: '邯郸', lng: 114.4907, lat: 36.6123, region: 'north' },
+        { name: '秦皇岛', lng: 119.5865, lat: 39.9425, region: 'north' },
+        { name: '张家口', lng: 114.8863, lat: 40.8119, region: 'north' },
+        { name: '承德', lng: 117.9382, lat: 40.9762, region: 'north' },
+        { name: '沧州', lng: 116.8574, lat: 38.3044, region: 'north' },
+        { name: '邢台', lng: 114.5088, lat: 37.0682, region: 'north' },
+        // 东北
+        { name: '哈尔滨', lng: 126.6424, lat: 45.7563, region: 'northeast' },
+        { name: '长春', lng: 125.3235, lat: 43.8171, region: 'northeast' },
+        { name: '沈阳', lng: 123.4291, lat: 41.7968, region: 'northeast' },
+        { name: '大连', lng: 121.6147, lat: 38.9140, region: 'northeast' },
+        { name: '吉林', lng: 126.5494, lat: 43.8378, region: 'northeast' },
+        { name: '齐齐哈尔', lng: 123.9579, lat: 47.3421, region: 'northeast' },
+        { name: '牡丹江', lng: 129.6186, lat: 44.5830, region: 'northeast' },
+        { name: '大庆', lng: 125.1033, lat: 46.5899, region: 'northeast' },
+        { name: '鞍山', lng: 122.9956, lat: 41.1106, region: 'northeast' },
+        { name: '丹东', lng: 124.3542, lat: 40.1243, region: 'northeast' },
+        // 华东
+        { name: '南京', lng: 118.7969, lat: 32.0603, region: 'east' },
+        { name: '杭州', lng: 120.1551, lat: 30.2741, region: 'east' },
+        { name: '合肥', lng: 117.2830, lat: 31.8612, region: 'east' },
+        { name: '福州', lng: 119.2965, lat: 26.0745, region: 'east' },
+        { name: '济南', lng: 117.0201, lat: 36.6512, region: 'east' },
+        { name: '南昌', lng: 115.8582, lat: 28.6829, region: 'east' },
+        { name: '苏州', lng: 120.5853, lat: 31.2989, region: 'east' },
+        { name: '无锡', lng: 120.3017, lat: 31.5747, region: 'east' },
+        { name: '宁波', lng: 121.5498, lat: 29.8683, region: 'east' },
+        { name: '温州', lng: 120.6722, lat: 28.0006, region: 'east' },
+        { name: '厦门', lng: 118.0894, lat: 24.4798, region: 'east' },
+        { name: '青岛', lng: 120.3826, lat: 36.0671, region: 'east' },
+        { name: '烟台', lng: 121.4479, lat: 37.4645, region: 'east' },
+        { name: '徐州', lng: 117.2841, lat: 34.2058, region: 'east' },
+        { name: '常州', lng: 119.9737, lat: 31.8112, region: 'east' },
+        { name: '南通', lng: 120.8943, lat: 32.0094, region: 'east' },
+        { name: '临沂', lng: 118.3564, lat: 35.1042, region: 'east' },
+        { name: '潍坊', lng: 119.1619, lat: 36.7069, region: 'east' },
+        { name: '威海', lng: 122.1201, lat: 37.5138, region: 'east' },
+        // 华中
+        { name: '武汉', lng: 114.3054, lat: 30.5931, region: 'central' },
+        { name: '长沙', lng: 112.9388, lat: 28.2282, region: 'central' },
+        { name: '郑州', lng: 113.6654, lat: 34.7578, region: 'central' },
+        { name: '洛阳', lng: 112.4540, lat: 34.6197, region: 'central' },
+        { name: '南阳', lng: 112.5409, lat: 32.9907, region: 'central' },
+        { name: '襄阳', lng: 112.1441, lat: 32.0424, region: 'central' },
+        { name: '宜昌', lng: 111.2865, lat: 30.6919, region: 'central' },
+        { name: '荆州', lng: 112.2397, lat: 30.3352, region: 'central' },
+        { name: '岳阳', lng: 113.1328, lat: 29.3703, region: 'central' },
+        { name: '衡阳', lng: 112.6077, lat: 26.9004, region: 'central' },
+        { name: '株洲', lng: 113.1317, lat: 27.8274, region: 'central' },
+        { name: '信阳', lng: 114.0750, lat: 32.1233, region: 'central' },
+        // 华南
+        { name: '广州', lng: 113.2644, lat: 23.1291, region: 'south' },
+        { name: '深圳', lng: 114.0579, lat: 22.5431, region: 'south' },
+        { name: '南宁', lng: 108.3665, lat: 22.8170, region: 'south' },
+        { name: '海口', lng: 110.3492, lat: 20.0174, region: 'south' },
+        { name: '东莞', lng: 113.7463, lat: 23.0205, region: 'south' },
+        { name: '佛山', lng: 113.1214, lat: 23.0218, region: 'south' },
+        { name: '珠海', lng: 113.5767, lat: 22.2707, region: 'south' },
+        { name: '汕头', lng: 116.6819, lat: 23.3540, region: 'south' },
+        { name: '湛江', lng: 110.3594, lat: 21.2707, region: 'south' },
+        { name: '桂林', lng: 110.2905, lat: 25.2742, region: 'south' },
+        { name: '柳州', lng: 109.4153, lat: 24.3146, region: 'south' },
+        { name: '三亚', lng: 109.5083, lat: 18.2479, region: 'south' },
+        // 西南
+        { name: '成都', lng: 104.0665, lat: 30.5723, region: 'west' },
+        { name: '昆明', lng: 102.8329, lat: 25.0406, region: 'west' },
+        { name: '贵阳', lng: 106.6302, lat: 26.6470, region: 'west' },
+        { name: '拉萨', lng: 91.1409, lat: 29.6456, region: 'west' },
+        { name: '绵阳', lng: 104.7417, lat: 31.4640, region: 'west' },
+        { name: '宜宾', lng: 104.6308, lat: 28.7602, region: 'west' },
+        { name: '泸州', lng: 105.4433, lat: 28.8718, region: 'west' },
+        { name: '遵义', lng: 106.9373, lat: 27.7066, region: 'west' },
+        { name: '大理', lng: 100.2257, lat: 25.5894, region: 'west' },
+        { name: '曲靖', lng: 103.7979, lat: 25.5016, region: 'west' },
+        // 西北
+        { name: '西安', lng: 108.9402, lat: 34.3416, region: 'northwest' },
+        { name: '兰州', lng: 103.8343, lat: 36.0611, region: 'northwest' },
+        { name: '西宁', lng: 101.7782, lat: 36.6171, region: 'northwest' },
+        { name: '银川', lng: 106.2309, lat: 38.4872, region: 'northwest' },
+        { name: '乌鲁木齐', lng: 87.6177, lat: 43.7928, region: 'northwest' },
+        { name: '咸阳', lng: 108.7051, lat: 34.3299, region: 'northwest' },
+        { name: '宝鸡', lng: 107.1448, lat: 34.3693, region: 'northwest' },
+        { name: '汉中', lng: 107.0235, lat: 33.0673, region: 'northwest' },
+        { name: '延安', lng: 109.4908, lat: 36.5965, region: 'northwest' },
+        { name: '榆林', lng: 109.7343, lat: 38.2852, region: 'northwest' },
+    ];
+
+    // ============================================================
+    // 全局状态
+    // ============================================================
+    let mapChart = null;
+    let weatherData = null;
+    let apiKey = '';
+    let apiHost = 'devapi.qweather.com';
+
+    // ============================================================
+    // 工具函数
+    // ============================================================
+    function $(id) { return document.getElementById(id); }
+
+    // 降雨量颜色映射
+    function getRainColor(mm) {
+        if (mm <= 0) return '#475569';
+        if (mm < 10) return '#fbbf24';
+        if (mm < 25) return '#3b82f6';
+        if (mm < 50) return '#8b5cf6';
+        if (mm < 100) return '#ef4444';
+        return '#991b1b';
+    }
+
+    function getRainLevel(mm) {
+        if (mm <= 0) return '无雨';
+        if (mm < 10) return '小雨';
+        if (mm < 25) return '中雨';
+        if (mm < 50) return '大雨';
+        if (mm < 100) return '暴雨';
+        return '大暴雨';
+    }
+
+    // ============================================================
+    // 和风天气 API 调用
+    // ============================================================
+    async function fetchAllWeatherData() {
+        const results = [];
+        const total = CITIES.length;
+        const batchSize = 5;
+
+        for (let i = 0; i < total; i += batchSize) {
+            const batch = CITIES.slice(i, i + batchSize);
+            
+            const promises = batch.map(async (city) => {
+                try {
+                    const url = `https://${apiHost}/v7/weather/3d?location=${city.lng},${city.lat}&key=${apiKey}`;
+                    const resp = await fetch(url);
+                    if (!resp.ok) return null;
+                    const data = await resp.json();
+                    
+                    if (data.code === '200' && data.daily) {
+                        return {
+                            name: city.name,
+                            lng: city.lng,
+                            lat: city.lat,
+                            region: city.region,
+                            rain: parseFloat(data.daily[0].precip) || 0,
+                            textDay: data.daily[0].textDay,
+                            textNight: data.daily[0].textNight,
+                            tempMax: data.daily[0].tempMax,
+                            tempMin: data.daily[0].tempMin,
+                        };
+                    }
+                } catch (e) {
+                    console.warn(`获取 ${city.name} 数据失败:`, e);
+                }
+                return null;
+            });
+
+            const batchResults = await Promise.all(promises);
+            batchResults.forEach(r => { if (r) results.push(r); });
+
+            if (i + batchSize < total) {
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        }
+
+        return results;
+    }
+
+    // ============================================================
+    // 演示数据生成
+    // ============================================================
+    function generateDemoData() {
+        const results = [];
+        
+        const rainPattern = {
+            south: [20, 80],
+            central: [5, 30],
+            east: [10, 50],
+            north: [0, 15],
+            northeast: [0, 10],
+            west: [5, 40],
+            northwest: [0, 10],
+        };
+
+        CITIES.forEach(city => {
+            const range = rainPattern[city.region] || [0, 10];
+            const rain = Math.round(range[0] + Math.random() * (range[1] - range[0]));
+            const texts = rain === 0 ? ['晴', '多云'] : rain < 10 ? ['小雨', '阴'] : rain < 25 ? ['中雨', '小雨'] : rain < 50 ? ['大雨', '中雨'] : ['暴雨', '大雨'];
+            
+            results.push({
+                name: city.name,
+                lng: city.lng,
+                lat: city.lat,
+                region: city.region,
+                rain: rain,
+                textDay: texts[0],
+                textNight: texts[1],
+                tempMax: Math.round(20 + Math.random() * 15),
+                tempMin: Math.round(15 + Math.random() * 10),
+            });
+        });
+
+        return results;
+    }
+
+    // ============================================================
+    // ECharts 可视化
+    // ============================================================
+    function initMapChart() {
+        if (mapChart) mapChart.dispose();
+        mapChart = echarts.init($('map-container'));
+    }
+
+    function renderMap() {
+        if (!mapChart || !weatherData) return;
+
+        const mapData = weatherData.map(city => ({
+            name: city.name,
+            value: [city.lng, city.lat, city.rain],
+            rain: city.rain,
+            text: city.textDay,
+            region: city.region,
+        }));
+
+        const option = {
+            backgroundColor: '#0b0f19',
+            tooltip: {
+                trigger: 'item',
+                backgroundColor: 'rgba(21, 26, 40, 0.95)',
+                borderColor: '#3b82f6',
+                textStyle: { color: '#e2e8f0' },
+                formatter: function(params) {
+                    if (params.data) {
+                        return `<div style="padding: 8px;">
+                            <b style="font-size: 14px;">${params.data.name}</b><br/>
+                            <span style="color: #94a3b8;">降雨量:</span> ${params.data.rain} mm<br/>
+                            <span style="color: #94a3b8;">等级:</span> <span style="color: ${getRainColor(params.data.rain)}">${getRainLevel(params.data.rain)}</span><br/>
+                            <span style="color: #94a3b8;">天气:</span> ${params.data.text}
+                        </div>`;
+                    }
+                    return params.name;
+                }
+            },
+            visualMap: {
+                show: false,
+                min: 0,
+                max: 100,
+                inRange: {
+                    color: ['#475569', '#fbbf24', '#3b82f6', '#8b5cf6', '#ef4444', '#991b1b']
+                }
+            },
+            geo: {
+                map: 'china',
+                roam: true,
+                zoom: 1.2,
+                label: { show: false },
+                itemStyle: {
+                    areaColor: '#1e293b',
+                    borderColor: '#3b82f6',
+                    borderWidth: 0.5
+                },
+                emphasis: {
+                    itemStyle: { areaColor: '#2563eb' }
+                }
+            },
+            series: [
+                {
+                    name: '降雨量',
+                    type: 'scatter',
+                    coordinateSystem: 'geo',
+                    data: mapData,
+                    symbolSize: function(val) {
+                        const rain = val[2];
+                        if (rain <= 0) return 5;
+                        return Math.max(6, Math.min(28, 5 + Math.sqrt(rain) * 2.2));
+                    },
+                    itemStyle: {
+                        color: function(params) {
+                            return getRainColor(params.data.rain);
+                        },
+                        shadowBlur: 8,
+                        shadowColor: function(params) {
+                            return getRainColor(params.data.rain);
+                        }
+                    },
+                    label: {
+                        show: true,
+                        formatter: '{b}',
+                        position: 'right',
+                        color: '#e2e8f0',
+                        fontSize: 9,
+                        distance: 2
+                    },
+                    emphasis: {
+                        label: { show: true, fontSize: 12 },
+                        itemStyle: { shadowBlur: 15 }
+                    }
+                }
+            ]
+        };
+
+        mapChart.setOption(option, true);
+        updateDashboard();
+    }
+
+    function updateDashboard() {
+        if (!weatherData) return;
+
+        const rains = weatherData.map(c => c.rain);
+        const maxRain = Math.max(...rains);
+        const avgRain = (rains.reduce((a, b) => a + b, 0) / rains.length).toFixed(1);
+        const rainyCities = rains.filter(r => r > 0).length;
+        const heavyCities = rains.filter(r => r >= 50).length;
+        const maxCity = weatherData.find(c => c.rain === maxRain);
+
+        $('stat-max').textContent = `${maxRain}mm (${maxCity ? maxCity.name : '-'})`;
+        $('stat-avg').textContent = `${avgRain}mm`;
+        $('stat-rainy').textContent = `${rainyCities} / ${weatherData.length}`;
+        $('stat-heavy').textContent = `${heavyCities} 个`;
+        $('info-cities').textContent = weatherData.length;
+        $('info-time').textContent = new Date().toLocaleString('zh-CN');
+
+        // 排行
+        const sorted = [...weatherData].sort((a, b) => b.rain - a.rain).slice(0, 15);
+        $('rain-ranking').innerHTML = sorted.map((city, i) => {
+            const color = getRainColor(city.rain);
+            const rankColor = i < 3 ? 'text-yellow-400' : 'text-gray-400';
+            return `<div class="flex items-center gap-2 py-1 hover:bg-dark/50 rounded px-1">
+                <span class="${rankColor} font-bold w-5 text-center">${i + 1}</span>
+                <span class="flex-1">${city.name}</span>
+                <span class="px-2 py-0.5 rounded text-xs" style="background:${color}20;color:${color}">${city.rain}mm</span>
+            </div>`;
+        }).join('');
+
+        // 预警
+        const warnings = weatherData.filter(c => c.rain >= 50);
+        if (warnings.length > 0) {
+            $('warning-list').innerHTML = warnings.map(c => 
+                `<div class="flex items-center gap-2 p-1 bg-red-900/20 rounded">
+                    <span class="text-red-400">⚠️</span>
+                    <span>${c.name}: ${c.rain}mm (${c.textDay})</span>
+                </div>`
+            ).join('');
+        } else {
+            $('warning-list').innerHTML = '<div class="text-gray-500 text-center py-2">✅ 暂无暴雨预警</div>';
+        }
+
+        // 区域统计
+        const regions = ['south', 'east', 'central', 'north', 'west', 'northwest', 'northeast'];
+        const regionNames = { south: '华南', east: '华东', central: '华中', north: '华北', west: '西南', northwest: '西北', northeast: '东北' };
+        
+        regions.forEach(r => {
+            const cities = weatherData.filter(c => c.region === r);
+            if (cities.length > 0) {
+                const avg = (cities.reduce((a, b) => a + b.rain, 0) / cities.length).toFixed(1);
+                const max = Math.max(...cities.map(c => c.rain));
+                $(`region-${r}`).textContent = `平均 ${avg}mm / 最大 ${max}mm`;
+            }
+        });
+    }
+
+    // ============================================================
+    // 地图加载
+    // ============================================================
+    async function loadChinaMap() {
+        try {
+            const resp = await fetch('https://geo.datav.aliyun.com/areas_v3/bound/100000_full.json');
+            if (!resp.ok) throw new Error('地图数据加载失败');
+            const geoJSON = await resp.json();
+            echarts.registerMap('china', geoJSON);
+            return true;
+        } catch (e) {
+            console.error('地图加载失败:', e);
+            return false;
+        }
+    }
+
+    // ============================================================
+    // 初始化
+    // ============================================================
+    async function init() {
+        const mapLoaded = await loadChinaMap();
+        if (!mapLoaded) {
+            alert('中国地图数据加载失败，请检查网络连接后刷新页面');
+            return;
+        }
+
+        initMapChart();
+
+        // 加载演示数据
+        weatherData = generateDemoData();
+        $('info-source').textContent = '演示数据 (模拟)';
+        $('data-time').textContent = '数据时间: 演示模式';
+        renderMap();
+
+        // 刷新按钮 - 获取真实数据
+        $('btn-refresh').addEventListener('click', async () => {
+            apiKey = prompt('请输入和风天气 API Key:\n\n免费注册: https://console.qweather.com\n免费订阅每月5万次请求');
+            if (!apiKey) return;
+
+            apiHost = 'devapi.qweather.com';
+            $('btn-refresh').textContent = '加载中...';
+            $('btn-refresh').disabled = true;
+
+            try {
+                // 测试 API Key
+                const testUrl = `https://${apiHost}/v7/weather/3d?location=116.41,39.92&key=${apiKey}`;
+                const testResp = await fetch(testUrl);
+                const testData = await testResp.json();
+                
+                if (testData.code !== '200') {
+                    alert(`API Key 无效 (错误码: ${testData.code})`);
+                    return;
+                }
+
+                weatherData = await fetchAllWeatherData();
+                $('info-source').textContent = '和风天气 (实时)';
+                $('data-time').textContent = '数据时间: 实时预报';
+                renderMap();
+                alert(`成功获取 ${weatherData.length} 个城市数据！`);
+
+            } catch (e) {
+                alert('获取数据失败: ' + e.message);
+            } finally {
+                $('btn-refresh').textContent = '刷新数据';
+                $('btn-refresh').disabled = false;
+            }
+        });
+
+        // 窗口缩放
+        window.addEventListener('resize', () => {
+            if (mapChart) mapChart.resize();
+        });
+    }
+
+    // 启动
+    init();
+    </script>
+</body>
+</html>
