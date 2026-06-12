@@ -57,6 +57,11 @@
             <div class="flex items-center justify-between mb-3">
                 <h2 class="text-xl font-bold text-blue-400">️ 中国降雨分布图</h2>
                 <div class="flex items-center gap-2 text-xs text-gray-400">
+                    <div id="day-switcher" class="flex gap-1 mr-2">
+                        <button class="day-btn px-2 py-1 rounded bg-blue-600 text-white" data-day="0">6月19日</button>
+                        <button class="day-btn px-2 py-1 rounded bg-gray-700 text-gray-300" data-day="1">6月20日</button>
+                        <button class="day-btn px-2 py-1 rounded bg-gray-700 text-gray-300" data-day="2">6月21日</button>
+                    </div>
                     <span id="data-time">数据时间: --</span>
                     <button id="btn-refresh" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 rounded transition text-white">
                         刷新数据
@@ -242,9 +247,11 @@
     // 全局状态
     // ============================================================
     let mapChart = null;
-    let weatherData = null;
+    let weatherDataByDay = { 0: null, 1: null, 2: null }; // 端午三天数据
+    let currentDay = 0; // 当前选中的日期索引
     // Cloudflare Worker 代理地址（部署后替换为你的 Worker URL）
     const PROXY_URL = 'https://weather-proxy.caotianchong.workers.dev';
+    const DRAGON_BOAT_DATES = ['2026-06-19', '2026-06-20', '2026-06-21'];
 
     // ============================================================
     // 工具函数
@@ -280,8 +287,20 @@
         return isNaN(num) ? 0 : num;
     }
 
+    // 根据日期索引获取对应的 daily 数组索引
+    // API 返回 daily[0]=今天, daily[1]=明天, daily[2]=后天
+    // 我们需要找到端午三天对应的索引
+    function getDayIndexForDragonBoat(apiDaily, targetDate) {
+        for (let i = 0; i < apiDaily.length; i++) {
+            if (apiDaily[i].fxDate === targetDate) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     async function fetchAllWeatherData() {
-        const results = [];
+        const resultsByDay = { 0: [], 1: [], 2: [] };
         const total = CITIES.length;
         const batchSize = 5;
 
@@ -296,18 +315,27 @@
                     const data = await resp.json();
                     
                     if (data.code === '200' && data.daily && data.daily.length > 0) {
-                        const day = data.daily[0];
-                        return {
-                            name: city.name,
-                            lng: city.lng,
-                            lat: city.lat,
-                            region: city.region,
-                            rain: parseRain(day.precip),
-                            textDay: day.textDay || '未知',
-                            textNight: day.textNight || '未知',
-                            tempMax: day.tempMax || '--',
-                            tempMin: day.tempMin || '--',
-                        };
+                        // 为每一天查找对应的数据
+                        for (let dayIdx = 0; dayIdx < 3; dayIdx++) {
+                            const targetDate = DRAGON_BOAT_DATES[dayIdx];
+                            const apiIdx = getDayIndexForDragonBoat(data.daily, targetDate);
+                            
+                            if (apiIdx >= 0) {
+                                const day = data.daily[apiIdx];
+                                resultsByDay[dayIdx].push({
+                                    name: city.name,
+                                    lng: city.lng,
+                                    lat: city.lat,
+                                    region: city.region,
+                                    rain: parseRain(day.precip),
+                                    textDay: day.textDay || '未知',
+                                    textNight: day.textNight || '未知',
+                                    tempMax: day.tempMax || '--',
+                                    tempMin: day.tempMin || '--',
+                                    fxDate: day.fxDate || targetDate,
+                                });
+                            }
+                        }
                     }
                 } catch (e) {
                     console.warn(`获取 ${city.name} 数据失败:`, e);
@@ -316,14 +344,14 @@
             });
 
             const batchResults = await Promise.all(promises);
-            batchResults.forEach(r => { if (r) results.push(r); });
+            // batchResults 都是 null，实际数据已存入 resultsByDay
 
             if (i + batchSize < total) {
                 await new Promise(resolve => setTimeout(resolve, 200));
             }
         }
 
-        return results;
+        return resultsByDay;
     }
 
     // ============================================================
@@ -372,7 +400,9 @@
     }
 
     function renderMap() {
-        if (!mapChart || !weatherData) return;
+        if (!mapChart) return;
+        const weatherData = weatherDataByDay[currentDay];
+        if (!weatherData) return;
 
         const mapData = weatherData.map(city => ({
             name: city.name,
@@ -464,6 +494,7 @@
     }
 
     function updateDashboard() {
+        const weatherData = weatherDataByDay[currentDay];
         if (!weatherData) return;
 
         const rains = weatherData.map(c => c.rain);
@@ -558,11 +589,26 @@
 
         initMapChart();
 
-        // 默认加载演示数据
-        weatherData = generateDemoData();
+        // 默认加载演示数据（三天）
+        for (let i = 0; i < 3; i++) {
+            weatherDataByDay[i] = generateDemoData();
+        }
         $('info-source').textContent = '演示数据 (模拟)';
-        $('data-time').textContent = '数据时间: 演示模式';
+        $('data-time').textContent = `数据时间: ${DRAGON_BOAT_DATES[currentDay]}`;
         renderMap();
+
+        // 日期切换按钮
+        document.querySelectorAll('.day-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                currentDay = parseInt(btn.dataset.day);
+                document.querySelectorAll('.day-btn').forEach(b => {
+                    b.className = 'day-btn px-2 py-1 rounded bg-gray-700 text-gray-300';
+                });
+                btn.className = 'day-btn px-2 py-1 rounded bg-blue-600 text-white';
+                $('data-time').textContent = `数据时间: ${DRAGON_BOAT_DATES[currentDay]}`;
+                renderMap();
+            });
+        });
 
         // 刷新按钮 - 通过代理获取真实数据
         $('btn-refresh').addEventListener('click', async () => {
@@ -580,11 +626,14 @@
                     return;
                 }
 
-                weatherData = await fetchAllWeatherData();
-                $('info-source').textContent = '和风天气 (实时)';
-                $('data-time').textContent = '数据时间: 实时预报';
+                const results = await fetchAllWeatherData();
+                weatherDataByDay = results;
+                $('info-source').textContent = '和风天气 (端午预报)';
+                $('data-time').textContent = `数据时间: ${DRAGON_BOAT_DATES[currentDay]}`;
                 renderMap();
-                alert(`成功获取 ${weatherData.length} 个城市数据！`);
+                
+                const totalCities = results[0].length;
+                alert(`成功获取 ${totalCities} 个城市 × 3天 的端午降雨预报数据！`);
 
             } catch (e) {
                 alert('获取数据失败: ' + e.message);
